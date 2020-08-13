@@ -6,18 +6,14 @@ import (
 	"fmt"
 	"html/template"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
-
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
-	alog "google.golang.org/appengine/log"
-	"google.golang.org/appengine/delay"
-	"google.golang.org/appengine/urlfetch"
+	"log"
+	// "google.golang.org/appengine/delay"
 )
 
 const beaconURL = "http://www.google-analytics.com/collect"
@@ -37,16 +33,7 @@ func init() {
 
 //required 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-		log.Printf("Defaulting to port %s", port)
-	}
-
-	log.Printf("Listening on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
-	}
+	appengine.Main()
 }
 
 func mustReadFile(path string) []byte {
@@ -70,19 +57,20 @@ func generateUUID(cid *string) error {
 	return nil
 }
 
-var delayHit = delay.Func("collect", logHit)
+// var delayHit = delay.Func("collect", logHit)
 
 func logLocal(c context.Context, ua string, ip string, cid string, values url.Values) error {
 	req, _ := http.NewRequest("POST", beaconURL, strings.NewReader(values.Encode()))
 	req.Header.Add("User-Agent", ua)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	if resp, err := urlfetch.Client(c).Do(req); err != nil {
-		alog.Errorf(c, "GA collector POST error: %s", err.Error())
+	
+	client := &http.Client{}
+	if resp, err := client.Do(req); err != nil {
+		log.Print("GA collector POST error: %s", err.Error())
 		return err
 	} else {
-		alog.Debugf(c, "GA collector status: %v, cid: %v, ip: %s", resp.Status, cid, ip)
-		alog.Debugf(c, "Reported payload: %v", values)
+		log.Print("GA collector status: %v, cid: %v, ip: %s", resp.Status, cid, ip)
+		log.Print("Reported payload: %v", values)
 	}
 	return nil
 }
@@ -110,14 +98,14 @@ func logHit(c context.Context, params []string, query url.Values, ua string, ip 
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
+	c := r.Context()
 	params := strings.SplitN(strings.Trim(r.URL.Path, "/"), "/", 2)
 	query, _ := url.ParseQuery(r.URL.RawQuery)
 	refOrg := r.Header.Get("Referer")
 
 	// / -> redirect
 	if len(params[0]) == 0 {
-		http.Redirect(w, r, "https://github.com/igrigorik/ga-beacon", http.StatusFound)
+		http.Redirect(w, r, "https://github.com/yugabyte/ga-beacon", http.StatusFound)
 		return
 	}
 
@@ -143,7 +131,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := pageTemplate.ExecuteTemplate(w, "page.html", templateParams); err != nil {
 			http.Error(w, "could not show account page", 500)
-			alog.Errorf(c, "Cannot execute template: %v", err)
+			log.Print("Cannot execute template: %v", err)
 		}
 		return
 	}
@@ -152,14 +140,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	var cid string
 	if cookie, err := r.Cookie("cid"); err != nil {
 		if err := generateUUID(&cid); err != nil {
-			alog.Debugf(c, "Failed to generate client UUID: %v", err)
+			log.Print("Failed to generate client UUID: %v", err)
 		} else {
-			alog.Debugf(c, "Generated new client UUID: %v", cid)
+			log.Print("Generated new client UUID: %v", cid)
 			http.SetCookie(w, &http.Cookie{Name: "cid", Value: cid, Path: fmt.Sprint("/", params[0])})
 		}
 	} else {
 		cid = cookie.Value
-		alog.Debugf(c, "Existing CID found: %v", cid)
+		log.Print("Existing CID found: %v", cid)
 	}
 
 	if len(cid) != 0 {
